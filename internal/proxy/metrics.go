@@ -97,6 +97,13 @@ func (g *gaugeWrapper) Get() int {
 	return *g.count
 }
 
+// GetActiveConns returns the current active connection count
+func GetActiveConns() int {
+	activeConnsMu.Lock()
+	defer activeConnsMu.Unlock()
+	return activeConnsCount
+}
+
 // MetricsServer wraps the HTTP server for prometheus metrics
 type MetricsServer struct {
 	server *http.Server
