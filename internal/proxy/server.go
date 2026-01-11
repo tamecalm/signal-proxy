@@ -114,7 +114,7 @@ func (s *Server) watchShutdown(ctx context.Context) {
 
 // drainConnections waits for active connections to finish (with timeout).
 func (s *Server) drainConnections() error {
-	activeConns := int(MetricActiveConns.Get())
+	activeConns := GetActiveConns()
 	if activeConns > 0 {
 		ui.LogStatus("info", "Draining "+itoa(activeConns)+" active connections (30s timeout)...")
 	}
