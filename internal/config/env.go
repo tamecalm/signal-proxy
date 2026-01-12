@@ -29,6 +29,10 @@ type EnvConfig struct {
 	
 	// Environment-specific values
 	LogLevel string
+	
+	// Ngrok configuration (development only)
+	NgrokEnabled bool
+	NgrokDomain  string
 }
 
 // LoadEnv loads environment configuration from environment variables
@@ -46,12 +50,24 @@ func LoadEnv() *EnvConfig {
 		cfg.Domain = getEnvOrDefault("DOMAIN", "proxy.yourdomain.com")
 		cfg.BaseURL = getEnvOrDefault("BASE_URL", "https://"+cfg.Domain)
 		cfg.Debug = getEnvOrDefault("DEBUG", "false") == "true"
+		cfg.NgrokEnabled = false // Never use ngrok in production
 		if cfg.LogLevel == "info" {
 			cfg.LogLevel = "info" 
 		}
 	default: // Development
 		cfg.Env = Development // Normalize unknown envs to development
-		cfg.Domain = getEnvOrDefault("DOMAIN", "localhost:8443")
+		
+		// Ngrok configuration (development only)
+		cfg.NgrokEnabled = getEnvOrDefault("NGROK_ENABLED", "true") == "true"
+		cfg.NgrokDomain = getEnvOrDefault("NGROK_DOMAIN", "")
+		
+		// Use ngrok domain if enabled and provided, otherwise fall back to localhost
+		if cfg.NgrokEnabled && cfg.NgrokDomain != "" {
+			cfg.Domain = getEnvOrDefault("DOMAIN", cfg.NgrokDomain)
+		} else {
+			cfg.Domain = getEnvOrDefault("DOMAIN", "localhost:8443")
+		}
+		
 		cfg.BaseURL = getEnvOrDefault("BASE_URL", "https://"+cfg.Domain)
 		cfg.Debug = getEnvOrDefault("DEBUG", "true") == "true"
 		if cfg.LogLevel == "info" {

@@ -109,8 +109,10 @@ You should see output like:
 | Variable | Development Default | Production Default | Description |
 |----------|--------------------|--------------------|-------------|
 | `APP_ENV` | `development` | `production` | Environment mode |
-| `DOMAIN` | `localhost:8443` | `proxy.yourdomain.com` | Base domain |
-| `BASE_URL` | `https://localhost:8443` | `https://proxy.yourdomain.com` | Full base URL |
+| `NGROK_ENABLED` | `true` | `false` | Use ngrok tunnel (dev only) |
+| `NGROK_DOMAIN` | *(empty)* | N/A | Your ngrok domain |
+| `DOMAIN` | ngrok domain or `localhost:8443` | `proxy.yourdomain.com` | Base domain |
+| `BASE_URL` | `https://${DOMAIN}` | `https://proxy.yourdomain.com` | Full base URL |
 | `DEBUG` | `true` | `false` | Enable debug logging |
 | `LOG_LEVEL` | `debug` | `info` | Log verbosity |
 
@@ -136,15 +138,38 @@ The proxy supports all Signal infrastructure endpoints:
 
 ## Deployment
 
-### Development
+### Development (with ngrok)
+
+> **⚠️ Important**: Signal doesn't allow localhost for testing. You must use ngrok to expose your local server with a public HTTPS URL.
+
+**Quick Start:**
 
 ```bash
-# Default development mode
-./signal-proxy
+# 1. Start ngrok tunnel (in Terminal 1)
+ngrok tls 8443
 
-# Explicit development environment
-APP_ENV=development ./signal-proxy
+# 2. Copy the ngrok URL (e.g., abc123xyz.ngrok.io)
+
+# 3. Create .env file with ngrok domain
+cp env.development.example .env
+# Edit .env and set NGROK_DOMAIN=abc123xyz.ngrok.io
+
+# 4. Start the proxy (in Terminal 2)
+./signal-proxy
 ```
+
+**With ngrok config file:**
+
+```bash
+# Terminal 1
+cd ngrok
+ngrok start --config ngrok.yml signal-proxy
+
+# Terminal 2  
+./signal-proxy
+```
+
+See [ngrok/README.md](ngrok/README.md) for detailed setup instructions.
 
 ### Production
 

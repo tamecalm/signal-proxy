@@ -1,0 +1,46 @@
+# Signal Proxy - Ngrok Configuration Template
+# Copy this file to ngrok.yml and customize with your settings
+#
+# Documentation: https://ngrok.com/docs/agent/config/
+
+version: "2"now we need to do something, i want to use ngrok for the development so i can get a  ngrok setup for developement environtment where i get domain i can use to test since signal wont allow localhost for testng and please create a proper folder structure for ngrok and docs to set it up and the development environtment should alwways expect ngrok instead of localhost ,scan the entire codebase and fix this well for this project think like a principal engineer now we need to do something, i want to use ngrok for the development so i can get a  ngrok setup for developement environtment where i get domain i can use to test since signal wont allow localhost for testng and please create a proper folder structure for ngrok and docs to set it up and the development environtment should alwways expect ngrok instead of localhost ,scan the entire codebase and fix this well for this project think like a principal engineer now we need to do something, i want to use ngrok for the development so i can get a  ngrok setup for developement environtment where i get domain i can use to test since signal wont allow localhost for testng and please create a proper folder structure for ngrok and docs to set it up and the development environtment should alwways expect ngrok instead of localhost ,scan the entire codebase and fix this well for this project think like a principal engineer 
+
+# Your ngrok authtoken (required)
+# Get yours at: https://dashboard.ngrok.com/get-started/your-authtoken
+authtoken: YOUR_NGROK_AUTHTOKEN
+
+# Tunnel definitions
+tunnels:
+  # Main Signal Proxy tunnel
+  signal-proxy:
+    # Using TLS mode to preserve the end-to-end encryption
+    proto: tls
+    addr: 8443
+    
+    # If you have a reserved domain (paid ngrok account):
+    # domain: your-subdomain.ngrok.io
+    
+    # Or use a custom domain (requires setting up CNAME):
+    # hostname: signal-proxy.yourdomain.com
+
+  # Optional: Metrics endpoint (HTTP)
+  metrics:
+    proto: http
+    addr: 9090
+    # Uncomment for basic auth protection:
+    # basic_auth:
+    #   - "admin:password"
+
+# Logging configuration
+log_level: info
+log_format: term
+
+# Optional: Console UI (useful for debugging)
+console_ui: true
+
+# Optional: Region selection (us, eu, ap, au, sa, jp, in)
+# region: us
+
+# Web inspection interface
+web_addr: 127.0.0.1:4040
+inspect_db_size: 50000000
