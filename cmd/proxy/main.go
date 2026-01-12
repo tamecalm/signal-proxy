@@ -18,6 +18,16 @@ func main() {
 
 	// Load and validate configuration
 	cfg := config.Load()
+	
+	// Display environment info
+	if cfg.Env.IsDevelopment() {
+		ui.LogStatus("info", "Environment: "+ui.Warn("DEVELOPMENT"))
+		ui.LogStatus("info", "Domain: "+cfg.Env.Domain)
+	} else {
+		ui.LogStatus("info", "Environment: "+ui.Success("PRODUCTION"))
+		ui.LogStatus("info", "Domain: "+cfg.Env.Domain)
+	}
+	
 	if err := cfg.Validate(); err != nil {
 		ui.LogStatus("error", err.Error())
 		os.Exit(1)

@@ -17,6 +17,9 @@ type Config struct {
 	MaxConns      int               `json:"max_conns"`
 	MetricsListen string            `json:"metrics_listen"`
 	Hosts         map[string]string `json:"hosts"`
+	
+	// Environment configuration (loaded from env vars)
+	Env *EnvConfig `json:"-"`
 }
 
 // Load reads configuration from config.json with sensible defaults.
@@ -29,6 +32,7 @@ func Load() *Config {
 		CertFile:      "server.crt",
 		KeyFile:       "server.key",
 		Hosts:         make(map[string]string),
+		Env:           LoadEnv(), // Load environment config
 	}
 
 	if file, err := os.Open("config.json"); err == nil {
