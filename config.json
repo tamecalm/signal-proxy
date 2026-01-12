@@ -1,7 +1,7 @@
 {
   "listen": ":8443",
-  "cert_file": "server.crt",
-  "key_file": "server.key",
+  "cert_file": "certs/dev/server.crt",
+  "key_file": "certs/dev/server.key",
   "timeout_sec": 300,
   "max_conns": 1000,
   "hosts": {

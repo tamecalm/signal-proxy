@@ -29,8 +29,8 @@ func Load() *Config {
 		TimeoutSec:    300,
 		MaxConns:      1000,
 		MetricsListen: ":9090",
-		CertFile:      "server.crt",
-		KeyFile:       "server.key",
+		CertFile:      "certs/dev/server.crt",
+		KeyFile:       "certs/dev/server.key",
 		Hosts:         make(map[string]string),
 		Env:           LoadEnv(), // Load environment config
 	}
