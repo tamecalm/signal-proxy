@@ -10,9 +10,15 @@ import (
 	"signal-proxy/internal/config"
 	"signal-proxy/internal/proxy"
 	"signal-proxy/internal/ui"
+
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	// Load .env file if it exists
+	// We ignore the error because in production/docker we might relying on system env vars
+	_ = godotenv.Load()
+
 	// Display banner with version and tagline
 	ui.PrintBanner()
 

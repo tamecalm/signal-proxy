@@ -17,6 +17,9 @@
 /proxy
 /proxy.exe
 signal-proxy
+signal-proxy-linux
+signal-proxy-mac
+signal-proxy-windows
 
 # Go workspace
 go.work
