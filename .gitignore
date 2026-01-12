@@ -21,6 +21,10 @@ signal-proxy-linux
 signal-proxy-mac
 signal-proxy-windows
 
+# Build output directory
+build/
+
+
 # Go workspace
 go.work
 go.work.sum
