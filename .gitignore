@@ -131,6 +131,7 @@ temp/
 *.bak
 *.backup
 *.tmp
+agents/
 
 # Dependency directories
 node_modules/
