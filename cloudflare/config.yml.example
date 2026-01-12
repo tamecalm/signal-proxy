@@ -1,0 +1,44 @@
+# Signal Proxy - Cloudflare Tunnel Configuration Template
+# Copy this file to config.yml and customize with your settings
+#
+# Documentation: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/configure-tunnels/local-management/configuration-file/
+
+# Your tunnel ID (from `cloudflared tunnel create <name>`)
+tunnel: YOUR_TUNNEL_ID
+
+# Path to your tunnel credentials file
+# Windows: C:\Users\YourUser\.cloudflared\<TUNNEL_ID>.json
+# macOS/Linux: ~/.cloudflared/<TUNNEL_ID>.json
+credentials-file: /path/to/.cloudflared/YOUR_TUNNEL_ID.json
+
+# Ingress rules define how traffic is routed
+ingress:
+  # Main Signal Proxy tunnel
+  - hostname: signal-proxy.yourdomain.com
+    service: https://localhost:8443
+    originRequest:
+      # Skip TLS verification for self-signed dev certificates
+      noTLSVerify: true
+      # Connection timeout
+      connectTimeout: 30s
+      # Keep-alive timeout
+      keepAliveTimeout: 90s
+
+  # Optional: Metrics endpoint
+  # - hostname: metrics.yourdomain.com
+  #   service: http://localhost:9090
+
+  # Catch-all rule (required - must be last)
+  - service: http_status:404
+
+# Logging configuration
+loglevel: info
+
+# Optional: Metrics server for cloudflared itself
+# metrics: localhost:3000
+
+# Optional: Protocol selection
+# protocol: quic  # Options: auto, quic, http2
+
+# Optional: Grace period for graceful shutdown
+# grace-period: 30s

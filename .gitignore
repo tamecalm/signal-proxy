@@ -16,6 +16,7 @@
 # Binary output (project-specific)
 /proxy
 /proxy.exe
+signal-proxy
 
 # Go workspace
 go.work

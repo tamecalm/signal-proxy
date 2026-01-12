@@ -109,9 +109,12 @@ You should see output like:
 | Variable | Development Default | Production Default | Description |
 |----------|--------------------|--------------------|-------------|
 | `APP_ENV` | `development` | `production` | Environment mode |
-| `NGROK_ENABLED` | `true` | `false` | Use ngrok tunnel (dev only) |
+| `TUNNEL_PROVIDER` | `auto` | N/A | Tunnel: `cloudflare`, `ngrok`, `none`, `auto` |
+| `CLOUDFLARE_ENABLED` | `false` | N/A | Use Cloudflare Tunnel (dev only) |
+| `CLOUDFLARE_DOMAIN` | *(empty)* | N/A | Your Cloudflare Tunnel hostname |
+| `NGROK_ENABLED` | `false` | N/A | Use ngrok tunnel (dev only) |
 | `NGROK_DOMAIN` | *(empty)* | N/A | Your ngrok domain |
-| `DOMAIN` | ngrok domain or `localhost:8443` | `proxy.yourdomain.com` | Base domain |
+| `DOMAIN` | tunnel domain or `localhost:8443` | `proxy.yourdomain.com` | Base domain |
 | `BASE_URL` | `https://${DOMAIN}` | `https://proxy.yourdomain.com` | Full base URL |
 | `DEBUG` | `true` | `false` | Enable debug logging |
 | `LOG_LEVEL` | `debug` | `info` | Log verbosity |
@@ -138,9 +141,33 @@ The proxy supports all Signal infrastructure endpoints:
 
 ## Deployment
 
-### Development (with ngrok)
+### Development (with Cloudflare Tunnel - Recommended)
 
-> **⚠️ Important**: Signal doesn't allow localhost for testing. You must use ngrok to expose your local server with a public HTTPS URL.
+> **⚠️ Important**: Signal doesn't allow localhost for testing. Cloudflare Tunnel is a **free** way to expose your local server.
+
+**Quick Start:**
+
+```bash
+# 1. Start your Signal Proxy (Terminal 1)
+./signal-proxy
+
+# 2. Start Cloudflare Tunnel (Terminal 2)
+cloudflared tunnel --url https://localhost:8443 --no-tls-verify
+
+# 3. Copy the generated URL (e.g., random-words.trycloudflare.com)
+
+# 4. Update .env with the tunnel URL
+cp env.development.example .env
+# Edit .env and set CLOUDFLARE_DOMAIN=random-words.trycloudflare.com
+```
+
+See [cloudflare/README.md](cloudflare/README.md) for persistent tunnels with custom domains.
+
+---
+
+### Development (with ngrok - Alternative)
+
+> **Note**: ngrok TLS tunnels now require pay-as-you-go. Consider using Cloudflare Tunnel instead.
 
 **Quick Start:**
 
@@ -152,20 +179,9 @@ ngrok tls 8443
 
 # 3. Create .env file with ngrok domain
 cp env.development.example .env
-# Edit .env and set NGROK_DOMAIN=abc123xyz.ngrok.io
+# Edit .env and set TUNNEL_PROVIDER=ngrok and NGROK_DOMAIN=abc123xyz.ngrok.io
 
 # 4. Start the proxy (in Terminal 2)
-./signal-proxy
-```
-
-**With ngrok config file:**
-
-```bash
-# Terminal 1
-cd ngrok
-ngrok start --config ngrok.yml signal-proxy
-
-# Terminal 2  
 ./signal-proxy
 ```
 
