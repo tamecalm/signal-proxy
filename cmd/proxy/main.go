@@ -13,6 +13,7 @@ import (
 )
 
 func main() {
+	// Display banner with version and tagline
 	ui.PrintBanner()
 
 	// Load and validate configuration
@@ -34,6 +35,7 @@ func main() {
 	// Shutdown metrics on exit
 	go func() {
 		<-ctx.Done()
+		ui.LogGracefulShutdown()
 		metrics.Shutdown(context.Background())
 	}()
 
