@@ -38,7 +38,7 @@ Signal Proxy is a privacy-focused TLS proxy designed to route Signal traffic thr
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/signal-proxy.git
+git clone https://github.com/tamecalm/signal-proxy.git
 cd signal-proxy
 
 # Build the binary
@@ -76,19 +76,6 @@ go build -o signal-proxy ./cmd/proxy
    ```bash
    ./signal-proxy
    ```
-
-You should see output like:
-```
-╭────────────────────────────────────────────────────────────────╮
-│   ◆ SIGNAL  v1.0.0                                             │
-│  Trusted Proxy Service                                         │
-╰────────────────────────────────────────────────────────────────╯
-
-11:30:05  ℹ  Environment: DEVELOPMENT
-11:30:05  ℹ  Domain: localhost:8443
-11:30:05  ✓  Proxy active on :8443
-11:30:05  ℹ  Metrics: http://localhost:9090/metrics
-```
 
 ## Configuration
 
@@ -230,37 +217,6 @@ The proxy exposes Prometheus metrics at `http://localhost:9090/metrics`:
 | `signal_proxy_bytes_sent_total` | Counter | Total bytes sent to clients |
 | `signal_proxy_bytes_received_total` | Counter | Total bytes received from clients |
 
-## Project Structure
-
-```
-signal-proxy/
-├── cmd/
-│   └── proxy/
-│       └── main.go           # Application entry point
-├── internal/
-│   ├── config/
-│   │   ├── config.go         # Configuration loading
-│   │   └── env.go            # Environment configuration
-│   ├── proxy/
-│   │   ├── server.go         # TLS proxy server
-│   │   ├── handler.go        # Connection handler
-│   │   └── metrics.go        # Prometheus metrics
-│   └── ui/
-│       ├── palette.go        # Color design tokens
-│       ├── theme.go          # Themed color functions
-│       ├── banner.go         # ASCII banner
-│       ├── tagline.go        # Rotating taglines
-│       ├── logger.go         # Status logging
-│       ├── table.go          # Table rendering
-│       ├── note.go           # Boxed notes
-│       ├── ansi.go           # ANSI utilities
-│       ├── links.go          # Terminal hyperlinks
-│       └── progress.go       # Progress indicators
-├── config.json               # Default configuration
-├── go.mod                    # Go module definition
-└── README.md                 # This file
-```
-
 ## Signal Client Configuration
 
 To use this proxy with the Signal app, users need to configure their Signal client to route traffic through your proxy domain. See [Signal's proxy documentation](https://signal.org/blog/run-a-proxy/) for client-side setup instructions.
@@ -299,9 +255,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - [Signal](https://signal.org) for creating privacy-focused communication
 - The open-source community for proxy infrastructure inspiration
-
----
-
-<p align="center">
-  <sub>Built with ❤️ for privacy</sub>
-</p>
