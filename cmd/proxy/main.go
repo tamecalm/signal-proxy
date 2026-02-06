@@ -57,6 +57,24 @@ func main() {
 
 	// Start the proxy server
 	srv := proxy.NewServer(cfg)
+
+	// Listen for SIGHUP to reload certificates
+	sighup := make(chan os.Signal, 1)
+	signal.Notify(sighup, syscall.SIGHUP)
+	go func() {
+		for {
+			select {
+			case <-sighup:
+				ui.LogStatus("info", "SIGHUP received, reloading certificates...")
+				if err := srv.Reload(); err != nil {
+					ui.LogStatus("error", "Reload failed: "+err.Error())
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
 	if err := srv.Start(ctx); err != nil {
 		ui.LogStatus("error", "Server failed: "+err.Error())
 		log.Fatal(err)

@@ -4,9 +4,9 @@ import (
 	"context"
 	"crypto/tls"
 	"net"
+	"strings"
 	"sync"
 	"time"
-
 	"signal-proxy/internal/config"
 	"signal-proxy/internal/ui"
 )
@@ -15,9 +15,13 @@ import (
 type Server struct {
 	Config   *config.Config
 	ln       net.Listener
-	connSem  chan struct{}   // Semaphore for connection limiting
-	wg       sync.WaitGroup  // Tracks active connections for graceful shutdown
-	shutdown chan struct{}   // Signals shutdown to accept loop
+	connSem  chan struct{}  // Semaphore for connection limiting
+	wg       sync.WaitGroup // Tracks active connections for graceful shutdown
+	shutdown chan struct{}  // Signals shutdown to accept loop
+
+	// Certificate management for hot-reloading
+	mu   sync.RWMutex
+	cert *tls.Certificate
 }
 
 // NewServer creates a new proxy server with the given configuration.
@@ -29,22 +33,45 @@ func NewServer(cfg *config.Config) *Server {
 	}
 }
 
-// Start begins accepting connections. It blocks until shutdown or error.
-// The context is used for graceful shutdown - cancel it to initiate shutdown.
-func (s *Server) Start(ctx context.Context) error {
-	// 1. Configure TLS
+// Reload reloads the TLS certificate from disk.
+func (s *Server) Reload() error {
 	cert, err := tls.LoadX509KeyPair(s.Config.CertFile, s.Config.KeyFile)
 	if err != nil {
 		return err
 	}
 
-	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
-		NextProtos:   []string{"h2", "http/1.1"},
+	s.mu.Lock()
+	s.cert = &cert
+	s.mu.Unlock()
+
+	ui.LogStatus("success", "Certificates reloaded from disk")
+	return nil
+}
+
+// getCertificate returns the current certificate for TLS handshakes.
+func (s *Server) getCertificate(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cert, nil
+}
+
+// Start begins accepting connections. It blocks until shutdown or error.
+// The context is used for graceful shutdown - cancel it to initiate shutdown.
+func (s *Server) Start(ctx context.Context) error {
+	// 1. Initial certificate load
+	if err := s.Reload(); err != nil {
+		return err
 	}
 
-	// 2. Start Listener
+	// TLS config for terminating the OUTER TLS connection from Signal app
+	tlsConfig := &tls.Config{
+		GetCertificate: s.getCertificate,
+		MinVersion:     tls.VersionTLS12,
+		NextProtos:     []string{"h2", "http/1.1"},
+	}
+
+	// 2. Start TLS Listener (we terminate the OUTER TLS here)
+	var err error
 	s.ln, err = tls.Listen("tcp", s.Config.Listen, tlsConfig)
 	if err != nil {
 		return err
@@ -65,22 +92,17 @@ func (s *Server) Start(ctx context.Context) error {
 		default:
 		}
 
-		// Set accept deadline to check shutdown periodically
-		if tcpLn, ok := s.ln.(*net.TCPListener); ok {
-			tcpLn.SetDeadline(time.Now().Add(1 * time.Second))
-		}
-
 		conn, err := s.ln.Accept()
 		if err != nil {
-			// Check if it's a timeout (normal during shutdown checks)
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				continue
-			}
 			// Check if listener was closed
 			select {
 			case <-s.shutdown:
 				return s.drainConnections()
 			default:
+				// Ignore temporary errors
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					continue
+				}
 				return err
 			}
 		}
@@ -141,10 +163,219 @@ func itoa(i int) string {
 	if i == 0 {
 		return "0"
 	}
-	s := ""
+	result := ""
 	for i > 0 {
-		s = string(rune('0'+i%10)) + s
+		result = string(rune('0'+i%10)) + result
 		i /= 10
 	}
-	return s
+	return result
+}
+
+// PeekSNI reads the TLS ClientHello from a raw connection to extract SNI.
+// This is used AFTER outer TLS termination to read the INNER TLS ClientHello.
+func PeekSNI(conn net.Conn) (string, []byte, error) {
+	buf := make([]byte, 16384)
+	n, err := conn.Read(buf)
+	if err != nil {
+		return "", nil, err
+	}
+	data := buf[:n]
+	sni := extractSNI(data)
+	return sni, data, nil
+}
+
+// extractSNI parses a TLS ClientHello message and extracts the SNI hostname
+func extractSNI(data []byte) string {
+	// Minimum TLS record header: 5 bytes
+	if len(data) < 5 {
+		return ""
+	}
+
+	// Check if this is a TLS Handshake record (0x16)
+	if data[0] != 0x16 {
+		return ""
+	}
+
+	// Skip record header (5 bytes)
+	pos := 5
+
+	// Handshake header: Type (1) + Length (3)
+	if len(data) < pos+4 {
+		return ""
+	}
+
+	// Check if this is a ClientHello (0x01)
+	if data[pos] != 0x01 {
+		return ""
+	}
+
+	// Skip handshake header (4 bytes)
+	pos += 4
+
+	// Skip version (2) + random (32)
+	if len(data) < pos+34 {
+		return ""
+	}
+	pos += 34
+
+	// Skip session ID
+	if len(data) < pos+1 {
+		return ""
+	}
+	sessionIDLen := int(data[pos])
+	pos += 1 + sessionIDLen
+
+	// Skip cipher suites
+	if len(data) < pos+2 {
+		return ""
+	}
+	cipherSuitesLen := int(data[pos])<<8 | int(data[pos+1])
+	pos += 2 + cipherSuitesLen
+
+	// Skip compression methods
+	if len(data) < pos+1 {
+		return ""
+	}
+	compressionLen := int(data[pos])
+	pos += 1 + compressionLen
+
+	// Extensions
+	if len(data) < pos+2 {
+		return ""
+	}
+	extensionsLen := int(data[pos])<<8 | int(data[pos+1])
+	pos += 2
+
+	endPos := pos + extensionsLen
+	if endPos > len(data) {
+		endPos = len(data)
+	}
+
+	// Parse extensions to find SNI (type 0x0000)
+	for pos+4 <= endPos {
+		extType := int(data[pos])<<8 | int(data[pos+1])
+		extLen := int(data[pos+2])<<8 | int(data[pos+3])
+		pos += 4
+
+		if extType == 0x0000 { // SNI extension
+			if pos+5 > endPos {
+				return ""
+			}
+			// Skip list length (2), check name type (should be 0)
+			if data[pos+2] != 0x00 {
+				return ""
+			}
+			nameLen := int(data[pos+3])<<8 | int(data[pos+4])
+			if pos+5+nameLen > endPos {
+				return ""
+			}
+			return string(data[pos+5 : pos+5+nameLen])
+		}
+		pos += extLen
+	}
+
+	return ""
+}
+
+// HandleConnection handles the TLS-in-TLS tunnel for Signal.
+// The outer TLS is already terminated by the server listener.
+// We read the inner TLS ClientHello to get the real destination SNI.
+func HandleConnection(ctx context.Context, clientConn net.Conn, cfg *config.Config) {
+	defer clientConn.Close()
+
+	// Track metrics
+	MetricActiveConns.Inc()
+	defer MetricActiveConns.Dec()
+
+	startTime := time.Now()
+	timeout := time.Duration(cfg.TimeoutSec) * time.Second
+
+	// Set deadline for reading inner ClientHello
+	clientConn.SetDeadline(time.Now().Add(10 * time.Second))
+
+	// Read the INNER TLS ClientHello (this is sent inside the outer TLS tunnel)
+	sni, initialData, err := PeekSNI(clientConn)
+	if err != nil {
+		MetricErrorsTotal.WithLabelValues("peek_failed").Inc()
+		ui.LogStatus("error", "Failed to peek SNI: "+err.Error())
+		return
+	}
+
+	// Lookup destination
+	target, allowed := cfg.Hosts[strings.ToLower(sni)]
+	if !allowed || sni == "" {
+		MetricErrorsTotal.WithLabelValues("unauthorized_sni").Inc()
+		ui.LogStatus("error", "Unauthorized SNI: "+sni)
+		return
+	}
+
+	// Connect to Signal server
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	upConn, err := dialer.DialContext(ctx, "tcp", target)
+	if err != nil {
+		MetricErrorsTotal.WithLabelValues("dial_failed").Inc()
+		ui.LogStatus("error", "Target unreachable: "+target+" - "+err.Error())
+		return
+	}
+	defer upConn.Close()
+
+	// Forward the ClientHello we already read
+	if len(initialData) > 0 {
+		if _, err := upConn.Write(initialData); err != nil {
+			MetricErrorsTotal.WithLabelValues("write_failed").Inc()
+			return
+		}
+	}
+
+	MetricRelayTotal.WithLabelValues(sni).Inc()
+
+	// Clear deadlines for relay
+	clientConn.SetDeadline(time.Time{})
+	upConn.SetDeadline(time.Time{})
+
+	// Relay bidirectionally
+	done := make(chan struct{}, 2)
+	var upBytes, downBytes int64
+
+	copyData := func(dst, src net.Conn, bytes *int64) {
+		defer func() { done <- struct{}{} }()
+		buf := make([]byte, 32*1024)
+		for {
+			src.SetDeadline(time.Now().Add(timeout))
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			nr, er := src.Read(buf)
+			if nr > 0 {
+				nw, ew := dst.Write(buf[:nr])
+				if nw > 0 {
+					*bytes += int64(nw)
+				}
+				if ew != nil {
+					break
+				}
+			}
+			if er != nil {
+				break
+			}
+		}
+	}
+
+	go copyData(upConn, clientConn, &upBytes)
+	go copyData(clientConn, upConn, &downBytes)
+
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+
+	// Record metrics
+	duration := time.Since(startTime).Seconds()
+	MetricConnectionDuration.Observe(duration)
+	MetricBytesTotal.WithLabelValues(sni, "upstream").Add(float64(upBytes))
+	MetricBytesTotal.WithLabelValues(sni, "downstream").Add(float64(downBytes))
+
+	ui.LogRelay(sni, clientConn.RemoteAddr().String(), upBytes, downBytes)
 }
