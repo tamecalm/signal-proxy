@@ -297,6 +297,7 @@ func HandleConnection(ctx context.Context, clientConn net.Conn, cfg *config.Conf
 	sni, initialData, err := PeekSNI(clientConn)
 	if err != nil {
 		MetricErrorsTotal.WithLabelValues("peek_failed").Inc()
+		Stats.RecordError()
 		ui.LogStatus("error", "Failed to peek SNI: "+err.Error())
 		return
 	}
@@ -305,6 +306,7 @@ func HandleConnection(ctx context.Context, clientConn net.Conn, cfg *config.Conf
 	target, allowed := cfg.Hosts[strings.ToLower(sni)]
 	if !allowed || sni == "" {
 		MetricErrorsTotal.WithLabelValues("unauthorized_sni").Inc()
+		Stats.RecordError()
 		ui.LogStatus("error", "Unauthorized SNI: "+sni)
 		return
 	}
@@ -314,6 +316,7 @@ func HandleConnection(ctx context.Context, clientConn net.Conn, cfg *config.Conf
 	upConn, err := dialer.DialContext(ctx, "tcp", target)
 	if err != nil {
 		MetricErrorsTotal.WithLabelValues("dial_failed").Inc()
+		Stats.RecordError()
 		ui.LogStatus("error", "Target unreachable: "+target+" - "+err.Error())
 		return
 	}
@@ -328,6 +331,7 @@ func HandleConnection(ctx context.Context, clientConn net.Conn, cfg *config.Conf
 	}
 
 	MetricRelayTotal.WithLabelValues(sni).Inc()
+	Stats.RecordRelay()
 
 	// Clear deadlines for relay
 	clientConn.SetDeadline(time.Time{})
@@ -376,6 +380,7 @@ func HandleConnection(ctx context.Context, clientConn net.Conn, cfg *config.Conf
 	MetricConnectionDuration.Observe(duration)
 	MetricBytesTotal.WithLabelValues(sni, "upstream").Add(float64(upBytes))
 	MetricBytesTotal.WithLabelValues(sni, "downstream").Add(float64(downBytes))
+	Stats.RecordBytes(upBytes + downBytes)
 
 	ui.LogRelay(sni, clientConn.RemoteAddr().String(), upBytes, downBytes)
 }

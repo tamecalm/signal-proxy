@@ -113,6 +113,8 @@ type MetricsServer struct {
 func NewMetricsServer(addr string) *MetricsServer {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
+	mux.HandleFunc("/api/stats", StatsHandler)
+	mux.HandleFunc("/api/history", HistoryHandler)
 
 	return &MetricsServer{
 		server: &http.Server{

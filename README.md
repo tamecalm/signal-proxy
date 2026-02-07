@@ -23,6 +23,8 @@ Signal Proxy is a privacy-focused TLS proxy designed to route Signal traffic thr
 - **Connection Limiting** — Built-in rate limiting with configurable max connections
 - **Graceful Shutdown** — Clean connection draining on shutdown signals
 - **Prometheus Metrics** — Production-ready observability with `/metrics` endpoint
+- **JSON Stats API** — Real-time server statistics for web frontend via `/api/stats`
+- **Historical Data** — 24h usage patterns and traffic history via `/api/history`
 - **Beautiful CLI** — Semantic logging with colored output, banners, and status indicators
 - **Environment Aware** — First-class support for development and production environments
 
@@ -88,7 +90,7 @@ go build -o signal-proxy ./cmd/proxy
 | `key_file` | string | `server.key` | Path to TLS private key |
 | `timeout_sec` | int | `300` | Connection timeout in seconds |
 | `max_conns` | int | `1000` | Maximum concurrent connections |
-| `metrics_listen` | string | `:9090` | Prometheus metrics endpoint |
+| `metrics_listen` | string | `:9090` | Prometheus and Stats API endpoint |
 | `hosts` | object | `{}` | SNI to upstream host mapping |
 
 ### Environment Variables
@@ -211,11 +213,17 @@ The proxy exposes Prometheus metrics at `http://localhost:9090/metrics`:
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `signal_proxy_connections_active` | Gauge | Current active connections |
-| `signal_proxy_connections_total` | Counter | Total connections handled |
-| `signal_proxy_connections_rejected` | Counter | Connections rejected (at capacity) |
-| `signal_proxy_bytes_sent_total` | Counter | Total bytes sent to clients |
-| `signal_proxy_bytes_received_total` | Counter | Total bytes received from clients |
+| `signalproxy_active_conns` | Gauge | Current active connections |
+| `signalproxy_relay_total` | Counter | Total relayed connections by SNI |
+| `signalproxy_bytes_total` | Counter | Total bytes transferred by direction |
+| `signalproxy_errors_total` | Counter | Total errors by type |
+
+### JSON API
+
+The proxy also provides a JSON API for frontend integration (Port 9090):
+
+- **Stats**: `GET /api/stats` — Real-time telemetry (uptime, throughput, success rate)
+- **History**: `GET /api/history` — 24-hour historical usage data
 
 ## Signal Client Configuration
 
