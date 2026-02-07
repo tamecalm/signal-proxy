@@ -21,9 +21,10 @@ type EnvConfig struct {
 	Env Environment
 
 	// Domain settings
-	Domain    string
-	APIDomain string
-	BaseURL   string
+	Domain        string
+	APIDomain     string
+	BaseURL       string
+	AllowedOrigin string
 
 	// Feature flags
 	Debug bool
@@ -51,6 +52,7 @@ func LoadEnv() *EnvConfig {
 		cfg.Domain = getEnvOrDefault("DOMAIN", "proxy.yourdomain.com")
 		cfg.APIDomain = getEnvOrDefault("API_DOMAIN", "api."+cfg.Domain)
 		cfg.BaseURL = getEnvOrDefault("BASE_URL", "https://"+cfg.Domain)
+		cfg.AllowedOrigin = getEnvOrDefault("ALLOWED_ORIGIN", "*")
 		cfg.Debug = getEnvOrDefault("DEBUG", "false") == "true"
 		cfg.NgrokEnabled = false // Never use ngrok in production
 		if cfg.LogLevel == "info" {
@@ -72,6 +74,7 @@ func LoadEnv() *EnvConfig {
 
 		cfg.BaseURL = getEnvOrDefault("BASE_URL", "https://"+cfg.Domain)
 		cfg.APIDomain = cfg.Domain
+		cfg.AllowedOrigin = "*"
 		cfg.Debug = getEnvOrDefault("DEBUG", "true") == "true"
 		if cfg.LogLevel == "info" {
 			cfg.LogLevel = "debug" // Dev default

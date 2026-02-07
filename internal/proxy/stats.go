@@ -22,6 +22,7 @@ type StatsTracker struct {
 	// History for 24h chart (hourly samples)
 	history        []HistorySample
 	historyMu      sync.RWMutex
+	AllowedOrigin  string
 }
 
 // HistorySample represents a single data point for historical charts
@@ -194,8 +195,7 @@ func formatFloat(f float64) string {
 
 // StatsHandler handles /api/stats requests
 func StatsHandler(w http.ResponseWriter, r *http.Request) {
-	// CORS headers for cross-origin requests
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Origin", Stats.AllowedOrigin)
 	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 	w.Header().Set("Content-Type", "application/json")
@@ -211,8 +211,7 @@ func StatsHandler(w http.ResponseWriter, r *http.Request) {
 
 // HistoryHandler handles /api/history requests
 func HistoryHandler(w http.ResponseWriter, r *http.Request) {
-	// CORS headers for cross-origin requests
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Origin", Stats.AllowedOrigin)
 	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 	w.Header().Set("Content-Type", "application/json")

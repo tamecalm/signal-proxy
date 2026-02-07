@@ -87,6 +87,10 @@ func (s *Server) Start(ctx context.Context) error {
 		metricsAddr = "localhost" + metricsAddr
 	}
 	ui.LogStatus("info", "Metrics: http://"+metricsAddr+"/metrics")
+	
+	// Set the global stats tracker configuration
+	Stats.AllowedOrigin = s.Config.Env.AllowedOrigin
+	
 	ui.LogStatus("info", "Stats API: https://" + s.Config.Env.APIDomain + "/api/stats")
 
 	// 3. Monitor for shutdown signal

@@ -95,6 +95,7 @@ Update `~/signal-proxy/.env`:
 APP_ENV=production
 DOMAIN=proxy.zignal.site
 API_DOMAIN=api.zignal.site
+ALLOWED_ORIGIN=https://zignal.site
 BASE_URL=https://proxy.zignal.site
 ```
 
@@ -107,8 +108,6 @@ server {
 
     ssl_certificate /etc/letsencrypt/live/proxy.zignal.site/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/proxy.zignal.site/privkey.pem;
-
-    add_header Access-Control-Allow-Origin "https://zignal.site" always;
 
     location /api/ {
         proxy_pass http://127.0.0.1:9090/api/;
