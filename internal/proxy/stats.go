@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -137,7 +138,7 @@ func (s *StatsTracker) GetSuccessRate() float64 {
 		return 100.0
 	}
 	
-	return float64(relays) / float64(total) * 100.0
+	return math.Round(float64(relays)/float64(total)*100.0*10) / 10
 }
 
 // GetStats returns the current stats for the API
