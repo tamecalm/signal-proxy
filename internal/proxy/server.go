@@ -87,7 +87,7 @@ func (s *Server) Start(ctx context.Context) error {
 		metricsAddr = "localhost" + metricsAddr
 	}
 	ui.LogStatus("info", "Metrics: http://"+metricsAddr+"/metrics")
-	ui.LogStatus("info", "Stats API: https://" + s.Config.Env.Domain + "/api/stats")
+	ui.LogStatus("info", "Stats API: https://" + s.Config.Env.APIDomain + "/api/stats")
 
 	// 3. Monitor for shutdown signal
 	go s.watchShutdown(ctx)
