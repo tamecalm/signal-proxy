@@ -46,7 +46,6 @@ func main() {
 	// Start metrics server with graceful shutdown
 	metrics := proxy.NewMetricsServer(cfg.MetricsListen)
 	metrics.Start()
-	ui.LogStatus("info", "Metrics: http://localhost"+cfg.MetricsListen+"/metrics")
 
 	// Shutdown metrics on exit
 	go func() {

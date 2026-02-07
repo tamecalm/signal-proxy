@@ -1,9 +1,11 @@
 package proxy
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -70,7 +72,7 @@ func (s *Server) Start(ctx context.Context) error {
 	tlsConfig := &tls.Config{
 		GetCertificate: s.getCertificate,
 		MinVersion:     tls.VersionTLS12,
-		NextProtos:     []string{"h2", "http/1.1"},
+		NextProtos:     []string{"http/1.1"},
 	}
 
 	// 2. Start TLS Listener (we terminate the OUTER TLS here)
@@ -80,8 +82,12 @@ func (s *Server) Start(ctx context.Context) error {
 		return err
 	}
 
-	ui.LogStatus("success", "Proxy active on "+s.Config.Listen)
-	ui.LogStatus("info", "Max connections: "+itoa(s.Config.MaxConns))
+	metricsAddr := s.Config.MetricsListen
+	if strings.HasPrefix(metricsAddr, ":") {
+		metricsAddr = "localhost" + metricsAddr
+	}
+	ui.LogStatus("info", "Metrics: http://"+metricsAddr+"/metrics")
+	ui.LogStatus("info", "Stats API: https://" + s.Config.Env.Domain + "/api/stats")
 
 	// 3. Monitor for shutdown signal
 	go s.watchShutdown(ctx)
@@ -400,60 +406,82 @@ func HandleConnection(ctx context.Context, clientConn net.Conn, cfg *config.Conf
 // handleInternalAPI serves the Stats API directly on the hijacked connection.
 // This allows port 443 to be shared between Signal traffic and the web API.
 func handleInternalAPI(conn net.Conn, initialData []byte) {
-	// Create a simple mux for our API endpoints
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/stats", StatsHandler)
-	mux.HandleFunc("/api/history", HistoryHandler)
+	ui.LogStatus("info", "Handling API request from "+conn.RemoteAddr().String())
+	
+	// Create a combined reader that puts back the data we already read
+	reader := io.MultiReader(bytes.NewReader(initialData), conn)
+	br := bufio.NewReader(reader)
 
-	// Since we've already read some data from the connection, we need to 
-	// put it back so the HTTP server can read the full request.
-	// We use a custom listener that yields this single connection.
-	listener := &singleConnListener{
-		conn:        conn,
-		initialData: initialData,
+	// Read the HTTP request from the connection
+	req, err := http.ReadRequest(br)
+	if err != nil {
+		if err != io.EOF {
+			ui.LogStatus("error", "API ReadRequest error: "+err.Error())
+		}
+		return
 	}
 
-	// Serve the request(s) on this connection
-	// We use a timeout to prevent hanging connections
-	server := &http.Server{
-		Handler:      mux,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+	// Create a simple response writer that writes directly to the connection
+	w := &simpleResponseWriter{
+		conn:   conn,
+		header: make(http.Header),
+	}
+
+	// Route and handle the request
+	switch req.URL.Path {
+	case "/api/stats":
+		StatsHandler(w, req)
+	case "/api/history":
+		HistoryHandler(w, req)
+	default:
+		http.Error(w, "Not Found", http.StatusNotFound)
+	}
+
+	// Final verification that headers were sent
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+// simpleResponseWriter implements http.ResponseWriter for our hijacked connection.
+type simpleResponseWriter struct {
+	conn        net.Conn
+	header      http.Header
+	wroteHeader bool
+	status      int
+}
+
+func (w *simpleResponseWriter) Header() http.Header {
+	return w.header
+}
+
+func (w *simpleResponseWriter) Write(b []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.conn.Write(b)
+}
+
+func (w *simpleResponseWriter) WriteHeader(status int) {
+	if w.wroteHeader {
+		return
+	}
+	w.wroteHeader = true
+	w.status = status
+
+	// Write HTTP/1.1 response line
+	fmt.Fprintf(w.conn, "HTTP/1.1 %d %s\r\n", status, http.StatusText(status))
+	
+	// Write headers
+	w.header.Set("Date", time.Now().Format(http.TimeFormat))
+	w.header.Set("Connection", "close") // Force close for simplicity
+	
+	for k, vv := range w.header {
+		for _, v := range vv {
+			fmt.Fprintf(w.conn, "%s: %s\r\n", k, v)
+		}
 	}
 	
-	server.Serve(listener)
-}
-
-// singleConnListener is a net.Listener that yields a single connection and then "closes".
-type singleConnListener struct {
-	conn        net.Conn
-	initialData []byte
-	once        sync.Once
-}
-
-func (l *singleConnListener) Accept() (net.Conn, error) {
-	var c net.Conn
-	l.once.Do(func() {
-		// Wrap the connection to prepend the data we already read
-		c = &prefixedConn{
-			Conn: l.conn,
-			r:    io.MultiReader(bytes.NewReader(l.initialData), l.conn),
-		}
-	})
-	if c == nil {
-		return nil, io.EOF // No more connections
-	}
-	return c, nil
-}
-
-func (l *singleConnListener) Close() error   { return nil }
-func (l *singleConnListener) Addr() net.Addr { return l.conn.LocalAddr() }
-
-type prefixedConn struct {
-	net.Conn
-	r io.Reader
-}
-
-func (p *prefixedConn) Read(b []byte) (int, error) {
-	return p.r.Read(b)
+	// End of headers
+	fmt.Fprintf(w.conn, "\r\n")
 }
