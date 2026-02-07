@@ -1,9 +1,12 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"io"
 	"net"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -305,6 +308,15 @@ func HandleConnection(ctx context.Context, clientConn net.Conn, cfg *config.Conf
 	// Lookup destination
 	target, allowed := cfg.Hosts[strings.ToLower(sni)]
 	if !allowed || sni == "" {
+		// Differentiate between Signal traffic (Inner TLS) and Stats API traffic (HTTP)
+		// Signal traffic always starts with a TLS handshake (0x16)
+		if len(initialData) > 0 && initialData[0] != 0x16 {
+			// This looks like an HTTP request (browser/landing page)
+			// Handle the Stats API directly on this connection
+			handleInternalAPI(clientConn, initialData)
+			return
+		}
+
 		MetricErrorsTotal.WithLabelValues("unauthorized_sni").Inc()
 		Stats.RecordError()
 		ui.LogStatus("error", "Unauthorized SNI: "+sni)
@@ -383,4 +395,65 @@ func HandleConnection(ctx context.Context, clientConn net.Conn, cfg *config.Conf
 	Stats.RecordBytes(upBytes + downBytes)
 
 	ui.LogRelay(sni, clientConn.RemoteAddr().String(), upBytes, downBytes)
+}
+
+// handleInternalAPI serves the Stats API directly on the hijacked connection.
+// This allows port 443 to be shared between Signal traffic and the web API.
+func handleInternalAPI(conn net.Conn, initialData []byte) {
+	// Create a simple mux for our API endpoints
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/stats", StatsHandler)
+	mux.HandleFunc("/api/history", HistoryHandler)
+
+	// Since we've already read some data from the connection, we need to 
+	// put it back so the HTTP server can read the full request.
+	// We use a custom listener that yields this single connection.
+	listener := &singleConnListener{
+		conn:        conn,
+		initialData: initialData,
+	}
+
+	// Serve the request(s) on this connection
+	// We use a timeout to prevent hanging connections
+	server := &http.Server{
+		Handler:      mux,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+	}
+	
+	server.Serve(listener)
+}
+
+// singleConnListener is a net.Listener that yields a single connection and then "closes".
+type singleConnListener struct {
+	conn        net.Conn
+	initialData []byte
+	once        sync.Once
+}
+
+func (l *singleConnListener) Accept() (net.Conn, error) {
+	var c net.Conn
+	l.once.Do(func() {
+		// Wrap the connection to prepend the data we already read
+		c = &prefixedConn{
+			Conn: l.conn,
+			r:    io.MultiReader(bytes.NewReader(l.initialData), l.conn),
+		}
+	})
+	if c == nil {
+		return nil, io.EOF // No more connections
+	}
+	return c, nil
+}
+
+func (l *singleConnListener) Close() error   { return nil }
+func (l *singleConnListener) Addr() net.Addr { return l.conn.LocalAddr() }
+
+type prefixedConn struct {
+	net.Conn
+	r io.Reader
+}
+
+func (p *prefixedConn) Read(b []byte) (int, error) {
+	return p.r.Read(b)
 }
