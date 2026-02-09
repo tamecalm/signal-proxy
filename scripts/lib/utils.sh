@@ -156,14 +156,16 @@ get_file_size() {
 format_bytes() {
     local bytes="$1"
     
-    if [[ $bytes -lt 1024 ]]; then
+    if [[ -z "$bytes" ]] || [[ "$bytes" == "0" ]]; then
+        echo "0B"
+    elif [[ $bytes -lt 1024 ]]; then
         echo "${bytes}B"
     elif [[ $bytes -lt 1048576 ]]; then
-        echo "$(echo "scale=1; $bytes/1024" | bc)KB"
+        echo "$(awk "BEGIN {printf \"%.1f\", $bytes/1024}")KB"
     elif [[ $bytes -lt 1073741824 ]]; then
-        echo "$(echo "scale=1; $bytes/1048576" | bc)MB"
+        echo "$(awk "BEGIN {printf \"%.1f\", $bytes/1048576}")MB"
     else
-        echo "$(echo "scale=1; $bytes/1073741824" | bc)GB"
+        echo "$(awk "BEGIN {printf \"%.1f\", $bytes/1073741824}")GB"
     fi
 }
 

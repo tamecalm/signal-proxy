@@ -14,6 +14,7 @@ import (
 
 	"signal-proxy/internal/auth"
 	"signal-proxy/internal/config"
+	"signal-proxy/internal/pac"
 	"signal-proxy/internal/ui"
 )
 
@@ -35,11 +36,14 @@ type Server struct {
 
 	// Transport for outgoing HTTP requests (with connection pooling)
 	transport *http.Transport
+
+	// PAC handler
+	pacHandler *pac.Handler
 }
 
 // NewServer creates a new HTTP/HTTPS proxy server
 func NewServer(cfg *config.Config, userStore *auth.UserStore) *Server {
-	return &Server{
+	srv := &Server{
 		Config:    cfg,
 		UserStore: userStore,
 		shutdown:  make(chan struct{}),
@@ -54,6 +58,23 @@ func NewServer(cfg *config.Config, userStore *auth.UserStore) *Server {
 			}).DialContext,
 		},
 	}
+
+	// Initialize PAC handler if enabled
+	if cfg.Env.PACEnabled {
+		pacConfig := &pac.Config{
+			Enabled:      cfg.Env.PACEnabled,
+			ProxyHost:    cfg.Env.Domain,
+			HTTPPort:     strings.TrimPrefix(cfg.Env.HTTPProxyPort, ":"),
+			SOCKS5Port:   strings.TrimPrefix(cfg.Env.SOCKS5Port, ":"),
+			Token:        cfg.Env.PACToken,
+			DefaultUser:  cfg.Env.PACDefaultUser,
+			RateLimitRPM: cfg.Env.PACRateLimitRPM,
+		}
+		srv.pacHandler = pac.NewHandler(pacConfig, userStore)
+		ui.LogStatus("info", "PAC endpoint enabled at /proxy.pac")
+	}
+
+	return srv
 }
 
 // Start begins accepting HTTP proxy connections
@@ -153,6 +174,12 @@ func (s *Server) watchShutdown(ctx context.Context) {
 
 // handleRequest processes incoming proxy requests
 func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
+	// Handle PAC file requests before proxy logic
+	if s.pacHandler != nil && (r.URL.Path == "/proxy.pac" || r.RequestURI == "/proxy.pac") {
+		s.pacHandler.ServeHTTP(w, r)
+		return
+	}
+
 	startTime := time.Now()
 	clientIP := r.RemoteAddr
 

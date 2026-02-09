@@ -84,6 +84,34 @@ curl --socks5 localhost:1080 --proxy-user admin:password https://httpbin.org/ip
 | `HTTP_PROXY_TLS_PORT` | `:8443` | HTTPS proxy listen port |
 | `SOCKS5_PORT` | `:1080` | SOCKS5 listen port |
 | `USERS_FILE` | `users.json` | Path to user credentials |
+| `PAC_ENABLED` | `true` | Enable PAC endpoint at /proxy.pac |
+| `PAC_TOKEN` | *(empty)* | Optional secret token for PAC access |
+| `PAC_DEFAULT_USER` | *(empty)* | Default username for PAC |
+| `PAC_RATE_LIMIT_RPM` | `60` | PAC endpoint rate limit |
+
+---
+
+## PAC (Proxy Auto-Config)
+
+Enable automatic proxy configuration for browsers and systems:
+
+### Get PAC File
+```bash
+# Basic PAC (browser will prompt for password)
+curl https://private.zignal.site/proxy.pac?user=tamecalm
+
+# PAC with embedded credentials
+curl "https://private.zignal.site/proxy.pac?user=tamecalm&pass=yourpassword"
+```
+
+### Configure Clients
+- **macOS**: System Preferences → Network → Proxies → Automatic Proxy Configuration
+- **Windows**: Settings → Proxy → Use setup script
+- **Firefox**: Settings → Network Settings → Automatic proxy configuration URL
+
+Enter: `https://private.zignal.site/proxy.pac?user=YOUR_USER`
+
+See [api/PAC.md](api/PAC.md) for full documentation.
 
 ---
 

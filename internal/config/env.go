@@ -43,6 +43,12 @@ type EnvConfig struct {
 	HTTPProxyTLSPort string // HTTPS proxy port (default :8443)
 	SOCKS5Port      string // SOCKS5 proxy port (default :1080)
 	UsersFile       string // Path to users.json
+
+	// PAC (Proxy Auto-Config) configuration
+	PACEnabled      bool   // Enable PAC endpoint (/proxy.pac)
+	PACToken        string // Optional secret token for PAC access control
+	PACDefaultUser  string // Default username if no user param provided
+	PACRateLimitRPM int    // Rate limit for PAC endpoint (requests per minute)
 }
 
 // LoadEnv loads environment configuration from environment variables
@@ -97,6 +103,12 @@ func LoadEnv() *EnvConfig {
 	cfg.SOCKS5Port = getEnvOrDefault("SOCKS5_PORT", ":1080")
 	cfg.UsersFile = getEnvOrDefault("USERS_FILE", "users.json")
 
+	// Load PAC configuration
+	cfg.PACEnabled = getEnvOrDefault("PAC_ENABLED", "true") == "true"
+	cfg.PACToken = getEnvOrDefault("PAC_TOKEN", "") // Empty = no token required
+	cfg.PACDefaultUser = getEnvOrDefault("PAC_DEFAULT_USER", "")
+	cfg.PACRateLimitRPM = parseIntOrDefault(getEnvOrDefault("PAC_RATE_LIMIT_RPM", "60"), 60)
+
 	return cfg
 }
 
@@ -121,4 +133,21 @@ func getEnvOrDefault(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// parseIntOrDefault parses a string as int, returning default on error
+func parseIntOrDefault(s string, defaultValue int) int {
+	if s == "" {
+		return defaultValue
+	}
+	// Simple integer parsing without importing strconv
+	result := 0
+	for _, c := range s {
+		if c >= '0' && c <= '9' {
+			result = result*10 + int(c-'0')
+		} else {
+			return defaultValue
+		}
+	}
+	return result
 }
