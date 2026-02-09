@@ -35,6 +35,14 @@ type EnvConfig struct {
 	// Ngrok configuration (development only)
 	NgrokEnabled bool
 	NgrokDomain  string
+
+	// Proxy mode configuration
+	ProxyMode       string // "signal" (default) or "https"
+	HTTPProxyPort   string // HTTP proxy port (default :8080)
+	HTTPProxyTLS    bool   // Enable TLS for HTTP proxy
+	HTTPProxyTLSPort string // HTTPS proxy port (default :8443)
+	SOCKS5Port      string // SOCKS5 proxy port (default :1080)
+	UsersFile       string // Path to users.json
 }
 
 // LoadEnv loads environment configuration from environment variables
@@ -80,6 +88,14 @@ func LoadEnv() *EnvConfig {
 			cfg.LogLevel = "debug" // Dev default
 		}
 	}
+
+	// Load proxy mode configuration (applies to both dev and prod)
+	cfg.ProxyMode = strings.ToLower(getEnvOrDefault("PROXY_MODE", "signal"))
+	cfg.HTTPProxyPort = getEnvOrDefault("HTTP_PROXY_PORT", ":8080")
+	cfg.HTTPProxyTLS = getEnvOrDefault("HTTP_PROXY_TLS", "true") == "true"
+	cfg.HTTPProxyTLSPort = getEnvOrDefault("HTTP_PROXY_TLS_PORT", ":8443")
+	cfg.SOCKS5Port = getEnvOrDefault("SOCKS5_PORT", ":1080")
+	cfg.UsersFile = getEnvOrDefault("USERS_FILE", "users.json")
 
 	return cfg
 }

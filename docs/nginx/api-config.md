@@ -67,4 +67,3 @@ curl https://api.zignal.site/api/stats
 # Expected response:
 # {"totalUsers":0,"activeConnections":0,"uptimeSeconds":123,"dataThroughput":"0 B/s","latency":18,"successRate":100}
 ```
-

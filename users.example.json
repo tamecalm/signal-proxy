@@ -1,0 +1,17 @@
+{
+  "users": [
+    {
+      "username": "admin",
+      "password_hash": "$2a$10$REPLACE_WITH_ACTUAL_HASH",
+      "rate_limit_rpm": 500,
+      "enabled": true
+    },
+    {
+      "username": "user1",
+      "password_hash": "$2a$10$REPLACE_WITH_ACTUAL_HASH",
+      "rate_limit_rpm": 200,
+      "enabled": true
+    }
+  ],
+  "ip_whitelist": []
+}

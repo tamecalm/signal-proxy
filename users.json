@@ -1,0 +1,12 @@
+{
+    "users": [
+        {
+            "username": "tamecalm",
+            "role": "admin",
+            "password_hash": "$2a$10$v.YxawzckkkBZtE13QFhl.P7nF1DCsNswkgSQu4S3JOYuJWxKSuJO",
+            "rate_limit_rpm": 500,
+            "enabled": true
+        }
+    ],
+    "ip_whitelist": []
+}

@@ -40,6 +40,17 @@ func Load() *Config {
 		json.NewDecoder(file).Decode(cfg)
 	}
 
+	// Override with environment variables (for production deployments)
+	if certFile := os.Getenv("CERT_FILE"); certFile != "" {
+		cfg.CertFile = certFile
+	}
+	if keyFile := os.Getenv("KEY_FILE"); keyFile != "" {
+		cfg.KeyFile = keyFile
+	}
+	if metricsListen := os.Getenv("METRICS_LISTEN"); metricsListen != "" {
+		cfg.MetricsListen = metricsListen
+	}
+
 	// Normalize SNI keys to lowercase
 	cleaned := make(map[string]string)
 	for k, v := range cfg.Hosts {
