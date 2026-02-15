@@ -1,12 +1,15 @@
 package auth
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -35,6 +38,20 @@ type UserStore struct {
 	superAdminIPs  []*net.IPNet
 	superAdminUser *User // cached reference to the super_admin user
 	rateLimiter    *RateLimiter
+
+	// Credential cache: avoids repeated bcrypt (~100ms) on every HTTP proxy request.
+	// Keys are "username:sha256(password)", values expire after credCacheTTL.
+	credCacheMu sync.RWMutex
+	credCache   map[string]credCacheEntry
+}
+
+// credCacheTTL is how long a successful credential validation is cached.
+const credCacheTTL = 5 * time.Minute
+
+// credCacheEntry stores a cached credential validation result.
+type credCacheEntry struct {
+	user       *User
+	validUntil time.Time
 }
 
 // NewUserStore creates a new user store from a config file
@@ -44,6 +61,7 @@ func NewUserStore(configPath string) (*UserStore, error) {
 		ipWhitelist:   make([]*net.IPNet, 0),
 		superAdminIPs: make([]*net.IPNet, 0),
 		rateLimiter:   NewRateLimiter(),
+		credCache:     make(map[string]credCacheEntry),
 	}
 
 	if err := store.LoadFromFile(configPath); err != nil {
@@ -110,15 +128,33 @@ func (s *UserStore) LoadFromFile(path string) error {
 		s.superAdminIPs = append(s.superAdminIPs, ipNet)
 	}
 
+	// Invalidate all cached credentials on config reload — users may have
+	// changed passwords, been disabled, or had roles updated.
+	s.InvalidateAllCredentials()
+
 	return nil
 }
 
-// ValidateCredentials checks if username and password are valid
+// ValidateCredentials checks if username and password are valid.
+// Uses a short-lived cache to avoid repeated bcrypt on every HTTP proxy request.
 func (s *UserStore) ValidateCredentials(username, password string) (*User, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	// Build cache key from username + SHA-256 of password (never cache plaintext)
+	passHash := sha256.Sum256([]byte(password))
+	cacheKey := strings.ToLower(username) + ":" + hex.EncodeToString(passHash[:])
 
+	// Check cache first (fast path)
+	s.credCacheMu.RLock()
+	if entry, ok := s.credCache[cacheKey]; ok && time.Now().Before(entry.validUntil) {
+		s.credCacheMu.RUnlock()
+		return entry.user, true
+	}
+	s.credCacheMu.RUnlock()
+
+	// Cache miss — fall through to bcrypt (slow path, ~100ms)
+	s.mu.RLock()
 	user, exists := s.users[strings.ToLower(username)]
+	s.mu.RUnlock()
+
 	if !exists {
 		return nil, false
 	}
@@ -128,7 +164,38 @@ func (s *UserStore) ValidateCredentials(username, password string) (*User, bool)
 		return nil, false
 	}
 
+	// Cache successful validation
+	s.credCacheMu.Lock()
+	s.credCache[cacheKey] = credCacheEntry{
+		user:       user,
+		validUntil: time.Now().Add(credCacheTTL),
+	}
+	s.credCacheMu.Unlock()
+
 	return user, true
+}
+
+// InvalidateUser removes all cached credentials for a specific user.
+// Call this when a user's password is changed, user is disabled, or role is updated.
+func (s *UserStore) InvalidateUser(username string) {
+	s.credCacheMu.Lock()
+	defer s.credCacheMu.Unlock()
+
+	prefix := strings.ToLower(username) + ":"
+	for key := range s.credCache {
+		if strings.HasPrefix(key, prefix) {
+			delete(s.credCache, key)
+		}
+	}
+}
+
+// InvalidateAllCredentials clears the entire credential cache.
+// Call this on config reload, bulk user updates, or any security-critical event.
+func (s *UserStore) InvalidateAllCredentials() {
+	s.credCacheMu.Lock()
+	defer s.credCacheMu.Unlock()
+
+	s.credCache = make(map[string]credCacheEntry)
 }
 
 // CheckIPAllowed verifies if an IP address is in the whitelist

@@ -174,10 +174,9 @@ func (h *Handler) sendPAC(w http.ResponseWriter, content string) {
 	// Set proper content type for PAC files
 	w.Header().Set("Content-Type", "application/x-ns-proxy-autoconfig")
 
-	// Prevent caching to ensure fresh credentials
-	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	w.Header().Set("Pragma", "no-cache")
-	w.Header().Set("Expires", "0")
+	// Allow short-term caching (5 min) - Android refetches PAC on every connection,
+	// causing 50-200ms latency per connection setup. Caching fixes this.
+	w.Header().Set("Cache-Control", "public, max-age=300")
 
 	// CORS headers for browser compatibility
 	w.Header().Set("Access-Control-Allow-Origin", "*")

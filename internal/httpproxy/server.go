@@ -96,8 +96,8 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.httpServer = &http.Server{
 		Handler:      handler,
-		ReadTimeout:  60 * time.Second,
-		WriteTimeout: 60 * time.Second,
+		ReadTimeout:  0, // Disabled: CONNECT tunnels are long-lived, managed per-handler
+		WriteTimeout: 0, // Disabled: CONNECT tunnels are long-lived, managed per-handler
 		IdleTimeout:  120 * time.Second,
 	}
 
@@ -127,8 +127,8 @@ func (s *Server) Start(ctx context.Context) error {
 
 		s.httpsServer = &http.Server{
 			Handler:      handler,
-			ReadTimeout:  60 * time.Second,
-			WriteTimeout: 60 * time.Second,
+			ReadTimeout:  0, // Disabled: CONNECT tunnels are long-lived, managed per-handler
+			WriteTimeout: 0, // Disabled: CONNECT tunnels are long-lived, managed per-handler
 			IdleTimeout:  120 * time.Second,
 		}
 
@@ -247,8 +247,12 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request, user *aut
 		targetHost = targetHost + ":443"
 	}
 
-	// Connect to target
-	targetConn, err := net.DialTimeout("tcp", targetHost, 30*time.Second)
+	// Connect to target with TCP keep-alive to prevent mobile NAT drops
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	targetConn, err := dialer.Dial("tcp", targetHost)
 	if err != nil {
 		MetricErrors.WithLabelValues("dial_failed").Inc()
 		http.Error(w, "Failed to connect to target", http.StatusBadGateway)
@@ -272,26 +276,35 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request, user *aut
 	}
 	defer clientConn.Close()
 
+	// Enable TCP keep-alive on client side too (if underlying conn is TCP)
+	if tcpConn, ok := clientConn.(*net.TCPConn); ok {
+		tcpConn.SetKeepAlive(true)
+		tcpConn.SetKeepAlivePeriod(30 * time.Second)
+	}
+
 	// Send 200 Connection Established
 	clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
 
-	// Relay data bidirectionally
+	// Relay data bidirectionally with buffered I/O
 	var upBytes, downBytes int64
 	done := make(chan struct{}, 2)
 
-	go func() {
-		n, _ := io.Copy(targetConn, clientConn)
-		upBytes = n
-		done <- struct{}{}
-	}()
+	copyBuf := func(dst, src net.Conn, bytes *int64) {
+		defer func() { done <- struct{}{} }()
+		buf := make([]byte, 32*1024) // 32KB buffer for efficient relay
+		n, _ := io.CopyBuffer(dst, src, buf)
+		*bytes = n
+		// Half-close to signal the other side gracefully
+		if tc, ok := dst.(*net.TCPConn); ok {
+			tc.CloseWrite()
+		}
+	}
 
-	go func() {
-		n, _ := io.Copy(clientConn, targetConn)
-		downBytes = n
-		done <- struct{}{}
-	}()
+	go copyBuf(targetConn, clientConn, &upBytes)
+	go copyBuf(clientConn, targetConn, &downBytes)
 
-	// Wait for either direction to finish
+	// Wait for both directions to finish for clean shutdown
+	<-done
 	<-done
 
 	// Record metrics
