@@ -14,6 +14,7 @@ import (
 // User represents a proxy user with credentials and settings
 type User struct {
 	Username     string `json:"username"`
+	Role         string `json:"role"`
 	PasswordHash string `json:"password_hash"`
 	RateLimitRPM int    `json:"rate_limit_rpm"` // Requests per minute, 0 = unlimited
 	Enabled      bool   `json:"enabled"`
@@ -21,24 +22,28 @@ type User struct {
 
 // UsersConfig holds all user configuration
 type UsersConfig struct {
-	Users       []User   `json:"users"`
-	IPWhitelist []string `json:"ip_whitelist"` // CIDR notation, empty = allow all
+	Users         []User   `json:"users"`
+	IPWhitelist   []string `json:"ip_whitelist"`    // CIDR notation, empty = allow all
+	SuperAdminIPs []string `json:"super_admin_ips"` // CIDR notation for super_admin bypass
 }
 
 // UserStore manages user authentication and authorization
 type UserStore struct {
-	mu          sync.RWMutex
-	users       map[string]*User
-	ipWhitelist []*net.IPNet
-	rateLimiter *RateLimiter
+	mu             sync.RWMutex
+	users          map[string]*User
+	ipWhitelist    []*net.IPNet
+	superAdminIPs  []*net.IPNet
+	superAdminUser *User // cached reference to the super_admin user
+	rateLimiter    *RateLimiter
 }
 
 // NewUserStore creates a new user store from a config file
 func NewUserStore(configPath string) (*UserStore, error) {
 	store := &UserStore{
-		users:       make(map[string]*User),
-		ipWhitelist: make([]*net.IPNet, 0),
-		rateLimiter: NewRateLimiter(),
+		users:         make(map[string]*User),
+		ipWhitelist:   make([]*net.IPNet, 0),
+		superAdminIPs: make([]*net.IPNet, 0),
+		rateLimiter:   NewRateLimiter(),
 	}
 
 	if err := store.LoadFromFile(configPath); err != nil {
@@ -76,22 +81,33 @@ func (s *UserStore) LoadFromFile(path string) error {
 		}
 	}
 
+	// Identify super_admin user
+	s.superAdminUser = nil
+	for _, user := range s.users {
+		if strings.ToLower(user.Role) == "super_admin" {
+			s.superAdminUser = user
+			break
+		}
+	}
+
 	// Parse IP whitelist
 	s.ipWhitelist = make([]*net.IPNet, 0, len(cfg.IPWhitelist))
 	for _, cidr := range cfg.IPWhitelist {
-		// Handle single IP addresses without CIDR notation
-		if !strings.Contains(cidr, "/") {
-			if strings.Contains(cidr, ":") {
-				cidr = cidr + "/128" // IPv6
-			} else {
-				cidr = cidr + "/32" // IPv4
-			}
-		}
-		_, ipNet, err := net.ParseCIDR(cidr)
+		ipNet, err := parseCIDR(cidr)
 		if err != nil {
 			return fmt.Errorf("invalid IP whitelist entry '%s': %w", cidr, err)
 		}
 		s.ipWhitelist = append(s.ipWhitelist, ipNet)
+	}
+
+	// Parse super_admin IPs
+	s.superAdminIPs = make([]*net.IPNet, 0, len(cfg.SuperAdminIPs))
+	for _, cidr := range cfg.SuperAdminIPs {
+		ipNet, err := parseCIDR(cidr)
+		if err != nil {
+			return fmt.Errorf("invalid super_admin_ips entry '%s': %w", cidr, err)
+		}
+		s.superAdminIPs = append(s.superAdminIPs, ipNet)
 	}
 
 	return nil
@@ -171,6 +187,30 @@ func (s *UserStore) CheckRateLimit(username string) bool {
 	return s.rateLimiter.Allow(username)
 }
 
+// IsSuperAdminIP checks if the given IP matches any super_admin CIDR.
+// Returns the super_admin User and true if matched, nil and false otherwise.
+func (s *UserStore) IsSuperAdminIP(ipStr string) (*User, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.superAdminUser == nil || len(s.superAdminIPs) == 0 {
+		return nil, false
+	}
+
+	ip := parseIP(ipStr)
+	if ip == nil {
+		return nil, false
+	}
+
+	for _, ipNet := range s.superAdminIPs {
+		if ipNet.Contains(ip) {
+			return s.superAdminUser, true
+		}
+	}
+
+	return nil, false
+}
+
 // GetUserCount returns the number of enabled users
 func (s *UserStore) GetUserCount() int {
 	s.mu.RLock()
@@ -186,4 +226,30 @@ func HashPassword(password string) (string, error) {
 		return "", err
 	}
 	return string(hash), nil
+}
+
+// parseCIDR parses a CIDR string, handling bare IPs without mask notation.
+func parseCIDR(cidr string) (*net.IPNet, error) {
+	if !strings.Contains(cidr, "/") {
+		if strings.Contains(cidr, ":") {
+			cidr = cidr + "/128" // IPv6
+		} else {
+			cidr = cidr + "/32" // IPv4
+		}
+	}
+	_, ipNet, err := net.ParseCIDR(cidr)
+	return ipNet, err
+}
+
+// parseIP extracts and parses an IP from a string that may include a port.
+func parseIP(ipStr string) net.IP {
+	host := ipStr
+	if strings.Contains(ipStr, ":") {
+		var err error
+		host, _, err = net.SplitHostPort(ipStr)
+		if err != nil {
+			host = ipStr // Might be IPv6 without port
+		}
+	}
+	return net.ParseIP(host)
 }

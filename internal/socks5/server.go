@@ -144,18 +144,35 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn) {
 	// Set initial timeout
 	conn.SetDeadline(time.Now().Add(30 * time.Second))
 
-	// Step 1: Method negotiation
-	username, err := s.handleMethodNegotiation(conn)
-	if err != nil {
-		ui.LogStatus("error", "SOCKS5 method negotiation failed: "+err.Error())
-		return
-	}
+	// Check if this is a super_admin IP (bypass auth + rate limit)
+	var username string
+	if superAdmin, ok := s.UserStore.IsSuperAdminIP(clientIP); ok {
+		username = superAdmin.Username
+		ui.LogStatus("info", "SOCKS5 super_admin bypass for: "+username+" from "+clientIP)
 
-	// Check rate limit
-	if !s.UserStore.CheckRateLimit(username) {
-		MetricRateLimited.WithLabelValues(username).Inc()
-		ui.LogStatus("warn", "SOCKS5 rate limited: "+username)
-		return
+		// Accept no-auth for super_admin
+		var err error
+		username, err = s.handleMethodNegotiationNoAuth(conn)
+		if err != nil {
+			ui.LogStatus("error", "SOCKS5 method negotiation failed (super_admin): "+err.Error())
+			return
+		}
+		username = superAdmin.Username
+	} else {
+		// Normal auth flow
+		var err error
+		username, err = s.handleMethodNegotiation(conn)
+		if err != nil {
+			ui.LogStatus("error", "SOCKS5 method negotiation failed: "+err.Error())
+			return
+		}
+
+		// Check rate limit (only for non-super_admin)
+		if !s.UserStore.CheckRateLimit(username) {
+			MetricRateLimited.WithLabelValues(username).Inc()
+			ui.LogStatus("warn", "SOCKS5 rate limited: "+username)
+			return
+		}
 	}
 
 	// Step 2: Handle request
@@ -248,6 +265,29 @@ func (s *Server) handleMethodNegotiation(conn net.Conn) (string, error) {
 
 	// Authenticate user
 	return s.authenticateUser(conn)
+}
+
+// handleMethodNegotiationNoAuth handles SOCKS5 method negotiation accepting no-auth
+func (s *Server) handleMethodNegotiationNoAuth(conn net.Conn) (string, error) {
+	// Read version and number of methods
+	buf := make([]byte, 2)
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		return "", err
+	}
+
+	if buf[0] != Version5 {
+		return "", errors.New("unsupported SOCKS version")
+	}
+
+	numMethods := int(buf[1])
+	methods := make([]byte, numMethods)
+	if _, err := io.ReadFull(conn, methods); err != nil {
+		return "", err
+	}
+
+	// Accept no-auth method
+	conn.Write([]byte{Version5, MethodNoAuth})
+	return "", nil // username will be set from the super_admin user
 }
 
 // authenticateUser handles username/password authentication (RFC 1929)

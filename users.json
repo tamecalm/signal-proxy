@@ -2,11 +2,14 @@
     "users": [
         {
             "username": "tamecalm",
-            "role": "admin",
-            "password_hash": "$2a$10$v.YxawzckkkBZtE13QFhl.P7nF1DCsNswkgSQu4S3JOYuJWxKSuJO",
-            "rate_limit_rpm": 500,
+            "role": "super_admin",
+            "password_hash": "$2a$10$xjfoiRLVXIfOtvb6q8Cr/.tjd2A8IZupQbc/egck7ypvZQTvleG8K",
+            "rate_limit_rpm": 0,
             "enabled": true
         }
     ],
-    "ip_whitelist": []
+    "ip_whitelist": [],
+    "super_admin_ips": [
+        "102.88.0.0/15"
+    ]
 }

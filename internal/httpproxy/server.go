@@ -191,30 +191,38 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Authenticate request
-	username, password, ok := parseProxyAuth(r)
-	if !ok {
-		MetricAuthFailures.WithLabelValues("no_credentials").Inc()
-		w.Header().Set("Proxy-Authenticate", `Basic realm="Proxy Authentication Required"`)
-		http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
-		return
-	}
+	// Check if this is a super_admin IP (bypass auth + rate limit)
+	var user *auth.User
+	if superAdmin, ok := s.UserStore.IsSuperAdminIP(clientIP); ok {
+		user = superAdmin
+		ui.LogStatus("info", "HTTP super_admin bypass for: "+user.Username+" from "+clientIP)
+	} else {
+		// Normal authentication flow
+		username, password, ok := parseProxyAuth(r)
+		if !ok {
+			MetricAuthFailures.WithLabelValues("no_credentials").Inc()
+			w.Header().Set("Proxy-Authenticate", `Basic realm="Proxy Authentication Required"`)
+			http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
+			return
+		}
 
-	user, valid := s.UserStore.ValidateCredentials(username, password)
-	if !valid {
-		MetricAuthFailures.WithLabelValues("invalid_credentials").Inc()
-		ui.LogStatus("warn", "Auth failed for user: "+username+" from "+clientIP)
-		w.Header().Set("Proxy-Authenticate", `Basic realm="Proxy Authentication Required"`)
-		http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
-		return
-	}
+		var valid bool
+		user, valid = s.UserStore.ValidateCredentials(username, password)
+		if !valid {
+			MetricAuthFailures.WithLabelValues("invalid_credentials").Inc()
+			ui.LogStatus("warn", "Auth failed for user: "+username+" from "+clientIP)
+			w.Header().Set("Proxy-Authenticate", `Basic realm="Proxy Authentication Required"`)
+			http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
+			return
+		}
 
-	// Check rate limit
-	if !s.UserStore.CheckRateLimit(username) {
-		MetricRateLimited.WithLabelValues(username).Inc()
-		ui.LogStatus("warn", "Rate limited: "+username)
-		http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
-		return
+		// Check rate limit (only for non-super_admin)
+		if !s.UserStore.CheckRateLimit(username) {
+			MetricRateLimited.WithLabelValues(username).Inc()
+			ui.LogStatus("warn", "Rate limited: "+username)
+			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+			return
+		}
 	}
 
 	// Track connection
