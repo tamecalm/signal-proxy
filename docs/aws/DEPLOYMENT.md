@@ -312,14 +312,17 @@ User=proxy
 Group=proxy
 WorkingDirectory=/opt/proxy
 EnvironmentFile=/opt/proxy/.env
-ExecStart=/opt/proxy/signal-proxy
+ExecStart=/opt/proxy/zignal
 Restart=always
 RestartSec=5
 
 # Security
-NoNewPrivileges=true
+NoNewPrivileges=false   # Must be false to allow capabilities
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 ProtectSystem=strict
 ReadWritePaths=/opt/proxy
+ReadOnlyPaths=/opt
 
 [Install]
 WantedBy=multi-user.target
