@@ -109,12 +109,16 @@ type MetricsServer struct {
 	server *http.Server
 }
 
-// NewMetricsServer creates a new metrics server
-func NewMetricsServer(addr string) *MetricsServer {
+// NewMetricsServer creates a new metrics server.
+// usageHandler is an optional handler for /api/usage (nil = not registered).
+func NewMetricsServer(addr string, usageHandler http.HandlerFunc) *MetricsServer {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/api/stats", StatsHandler)
 	mux.HandleFunc("/api/history", HistoryHandler)
+	if usageHandler != nil {
+		mux.HandleFunc("/api/usage", usageHandler)
+	}
 
 	return &MetricsServer{
 		server: &http.Server{

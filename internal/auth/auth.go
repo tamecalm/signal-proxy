@@ -21,6 +21,13 @@ type User struct {
 	PasswordHash string `json:"password_hash"`
 	RateLimitRPM int    `json:"rate_limit_rpm"` // Requests per minute, 0 = unlimited
 	Enabled      bool   `json:"enabled"`
+
+	// Bandwidth & plan management
+	Plan               string `json:"plan,omitempty"`                // Plan name: "starter", "pro", "enterprise", "admin"
+	BandwidthLimitGB   int    `json:"bandwidth_limit_gb,omitempty"`  // Monthly data cap in GB, 0 = unlimited
+	BandwidthSpeedMbps int    `json:"bandwidth_speed_mbps,omitempty"` // Max speed in Mbps, 0 = unlimited (no throttle)
+	MaxConnections     int    `json:"max_connections,omitempty"`     // Per-user concurrent connection limit, 0 = unlimited
+	ExpiresAt          string `json:"expires_at,omitempty"`          // Account expiration (RFC3339), empty = no expiry
 }
 
 // UsersConfig holds all user configuration
@@ -283,6 +290,36 @@ func (s *UserStore) GetUserCount() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.users)
+}
+
+// GetUser returns a user by username, or nil if not found.
+func (s *UserStore) GetUser(username string) *User {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.users[strings.ToLower(username)]
+}
+
+// CheckExpiry returns true if the user's account has NOT expired.
+// Returns false if the account has expired.
+func (s *UserStore) CheckExpiry(username string) bool {
+	s.mu.RLock()
+	user, exists := s.users[strings.ToLower(username)]
+	s.mu.RUnlock()
+
+	if !exists {
+		return false
+	}
+
+	if user.ExpiresAt == "" {
+		return true // no expiry set
+	}
+
+	expiryTime, err := time.Parse(time.RFC3339, user.ExpiresAt)
+	if err != nil {
+		return true // unparseable expiry treated as no expiry
+	}
+
+	return time.Now().Before(expiryTime)
 }
 
 // HashPassword generates a bcrypt hash for a password

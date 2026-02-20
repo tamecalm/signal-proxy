@@ -5,9 +5,11 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"signal-proxy/internal/auth"
+	"signal-proxy/internal/bandwidth"
 	"signal-proxy/internal/config"
 	"signal-proxy/internal/httpproxy"
 	"signal-proxy/internal/proxy"
@@ -41,17 +43,6 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	// Start metrics server with graceful shutdown
-	metrics := proxy.NewMetricsServer(cfg.MetricsListen)
-	metrics.Start()
-
-	// Shutdown metrics on exit
-	go func() {
-		<-ctx.Done()
-		ui.LogGracefulShutdown()
-		metrics.Shutdown(context.Background())
-	}()
-
 	// Switch behavior based on proxy mode
 	switch cfg.Env.ProxyMode {
 	case "https", "http", "general":
@@ -71,6 +62,15 @@ func runSignalProxyMode(ctx context.Context, cfg *config.Config) {
 		ui.LogStatus("error", err.Error())
 		os.Exit(1)
 	}
+
+	// Start metrics server (no bandwidth usage endpoint in Signal mode)
+	metrics := proxy.NewMetricsServer(cfg.MetricsListen, nil)
+	metrics.Start()
+	go func() {
+		<-ctx.Done()
+		ui.LogGracefulShutdown()
+		metrics.Shutdown(context.Background())
+	}()
 
 	// Start the proxy server
 	srv := proxy.NewServer(cfg)
@@ -110,11 +110,27 @@ func runHTTPSProxyMode(ctx context.Context, cfg *config.Config) {
 	}
 	ui.LogStatus("info", "Loaded "+itoa(userStore.GetUserCount())+" users from "+cfg.Env.UsersFile)
 
+	// Create bandwidth tracker (persists alongside users.json)
+	usageFile := filepath.Join(filepath.Dir(cfg.Env.UsersFile), "bandwidth_usage.json")
+	bwTracker := bandwidth.NewTracker(usageFile)
+	defer bwTracker.Stop()
+	ui.LogStatus("info", "Bandwidth tracker active → "+usageFile)
+
+	// Start metrics server with /api/usage endpoint
+	usageHandler := bandwidth.UsageHandler(bwTracker, cfg.Env.AllowedOrigin)
+	metrics := proxy.NewMetricsServer(cfg.MetricsListen, usageHandler)
+	metrics.Start()
+	go func() {
+		<-ctx.Done()
+		ui.LogGracefulShutdown()
+		metrics.Shutdown(context.Background())
+	}()
+
 	// Create HTTP proxy server
-	httpSrv := httpproxy.NewServer(cfg, userStore)
+	httpSrv := httpproxy.NewServer(cfg, userStore, bwTracker)
 
 	// Create SOCKS5 proxy server
-	socks5Srv := socks5.NewServer(cfg, userStore)
+	socks5Srv := socks5.NewServer(cfg, userStore, bwTracker)
 
 	// Start SOCKS5 in background
 	go func() {

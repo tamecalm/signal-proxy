@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"signal-proxy/internal/auth"
+	"signal-proxy/internal/bandwidth"
 	"signal-proxy/internal/config"
 	"signal-proxy/internal/ui"
 )
@@ -53,6 +54,7 @@ const (
 type Server struct {
 	Config    *config.Config
 	UserStore *auth.UserStore
+	Bandwidth *bandwidth.Tracker
 
 	ln       net.Listener
 	wg       sync.WaitGroup
@@ -60,10 +62,11 @@ type Server struct {
 }
 
 // NewServer creates a new SOCKS5 proxy server
-func NewServer(cfg *config.Config, userStore *auth.UserStore) *Server {
+func NewServer(cfg *config.Config, userStore *auth.UserStore, bw *bandwidth.Tracker) *Server {
 	return &Server{
 		Config:    cfg,
 		UserStore: userStore,
+		Bandwidth: bw,
 		shutdown:  make(chan struct{}),
 	}
 }
@@ -144,35 +147,59 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn) {
 	// Set initial timeout
 	conn.SetDeadline(time.Now().Add(30 * time.Second))
 
-	// Check if this is a super_admin IP (bypass auth + rate limit)
+	// Always require username/password authentication
 	var username string
-	if superAdmin, ok := s.UserStore.IsSuperAdminIP(clientIP); ok {
-		username = superAdmin.Username
-		ui.LogStatus("info", "SOCKS5 super_admin bypass for: "+username+" from "+clientIP)
+	var err error
+	username, err = s.handleMethodNegotiation(conn)
+	if err != nil {
+		ui.LogStatus("error", "SOCKS5 method negotiation failed: "+err.Error())
+		return
+	}
 
-		// Accept no-auth for super_admin
-		var err error
-		username, err = s.handleMethodNegotiationNoAuth(conn)
-		if err != nil {
-			ui.LogStatus("error", "SOCKS5 method negotiation failed (super_admin): "+err.Error())
-			return
+	// Determine if this user is a super_admin connecting from a trusted IP
+	isSuperAdmin := false
+	user := s.UserStore.GetUser(username)
+	if user != nil && user.Role == "super_admin" {
+		if _, ok := s.UserStore.IsSuperAdminIP(clientIP); ok {
+			isSuperAdmin = true
+			ui.LogStatus("info", "SOCKS5 super_admin verified: "+username+" from "+clientIP)
 		}
-		username = superAdmin.Username
-	} else {
-		// Normal auth flow
-		var err error
-		username, err = s.handleMethodNegotiation(conn)
-		if err != nil {
-			ui.LogStatus("error", "SOCKS5 method negotiation failed: "+err.Error())
-			return
-		}
+	}
 
-		// Check rate limit (only for non-super_admin)
+	if !isSuperAdmin {
+		// Check rate limit
 		if !s.UserStore.CheckRateLimit(username) {
 			MetricRateLimited.WithLabelValues(username).Inc()
 			ui.LogStatus("warn", "SOCKS5 rate limited: "+username)
 			return
 		}
+	}
+
+	// --- Bandwidth & plan enforcement (skip for super_admin) ---
+	if !isSuperAdmin && user != nil {
+		// Check account expiry
+		if !s.UserStore.CheckExpiry(username) {
+			ui.LogStatus("warn", "SOCKS5 account expired: "+username)
+			return
+		}
+
+		// Check bandwidth allowance
+		if s.Bandwidth != nil && !s.Bandwidth.CheckAllowance(username, user.BandwidthLimitGB) {
+			ui.LogStatus("warn", "SOCKS5 bandwidth exceeded: "+username)
+			return
+		}
+
+		// Check concurrent connection limit
+		if s.Bandwidth != nil && !s.Bandwidth.CheckConnLimit(username, user.MaxConnections) {
+			ui.LogStatus("warn", "SOCKS5 connection limit reached: "+username)
+			return
+		}
+	}
+
+	// Track per-user connection count
+	if s.Bandwidth != nil {
+		s.Bandwidth.IncrementConns(username)
+		defer s.Bandwidth.DecrementConns(username)
 	}
 
 	// Step 2: Handle request
@@ -201,18 +228,27 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn) {
 	conn.SetDeadline(time.Time{})
 	targetConn.SetDeadline(time.Time{})
 
+	// Apply optional speed throttle
+	var relayClient, relayTarget net.Conn
+	relayClient = conn
+	relayTarget = targetConn
+	if user != nil && user.BandwidthSpeedMbps > 0 {
+		relayClient = bandwidth.NewThrottledConn(conn, user.BandwidthSpeedMbps).(*bandwidth.ThrottledConn)
+		relayTarget = bandwidth.NewThrottledConn(targetConn, user.BandwidthSpeedMbps).(*bandwidth.ThrottledConn)
+	}
+
 	// Relay data bidirectionally
 	var upBytes, downBytes int64
 	done := make(chan struct{}, 2)
 
 	go func() {
-		n, _ := io.Copy(targetConn, conn)
+		n, _ := io.Copy(relayTarget, relayClient)
 		upBytes = n
 		done <- struct{}{}
 	}()
 
 	go func() {
-		n, _ := io.Copy(conn, targetConn)
+		n, _ := io.Copy(relayClient, relayTarget)
 		downBytes = n
 		done <- struct{}{}
 	}()
@@ -225,6 +261,11 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn) {
 	MetricBytes.WithLabelValues(username, "upstream").Add(float64(upBytes))
 	MetricBytes.WithLabelValues(username, "downstream").Add(float64(downBytes))
 	MetricDuration.Observe(duration)
+
+	// Record bandwidth usage for tracking
+	if s.Bandwidth != nil {
+		s.Bandwidth.RecordBytes(username, upBytes, downBytes)
+	}
 }
 
 // handleMethodNegotiation handles SOCKS5 method selection and authentication

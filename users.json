@@ -5,7 +5,30 @@
             "role": "super_admin",
             "password_hash": "$2a$10$xjfoiRLVXIfOtvb6q8Cr/.tjd2A8IZupQbc/egck7ypvZQTvleG8K",
             "rate_limit_rpm": 0,
-            "enabled": true
+            "enabled": true,
+            "plan": "admin"
+        },
+        {
+            "username": "femi",
+            "role": "user",
+            "password_hash": "$2a$10$xTXmaK8O4gxcqOOLGCaO2ee0a4hojypPRw9rcE04Wk7aHNAIcVqTC",
+            "rate_limit_rpm": 0,
+            "enabled": true,
+            "plan": "pro",
+            "bandwidth_limit_gb": 100,
+            "max_connections": 5,
+            "expires_at": "2026-03-20T00:00:00Z"
+        },
+        {
+            "username": "daniel",
+            "role": "user",
+            "password_hash": "$2a$10$dYOVFYRH1j/P3MGm/XnufuGbIQdalLcOMQfoRu5YOR8BGK3ZhK9M6",
+            "rate_limit_rpm": 0,
+            "enabled": false,
+            "plan": "starter",
+            "bandwidth_limit_gb": 20,
+            "max_connections": 5,
+            "expires_at": "2026-03-20T00:00:00Z"
         }
     ],
     "ip_whitelist": [],

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"signal-proxy/internal/auth"
+	"signal-proxy/internal/bandwidth"
 	"signal-proxy/internal/config"
 	"signal-proxy/internal/pac"
 	"signal-proxy/internal/ui"
@@ -22,6 +23,7 @@ import (
 type Server struct {
 	Config    *config.Config
 	UserStore *auth.UserStore
+	Bandwidth *bandwidth.Tracker
 
 	httpServer  *http.Server
 	httpsServer *http.Server
@@ -42,10 +44,11 @@ type Server struct {
 }
 
 // NewServer creates a new HTTP/HTTPS proxy server
-func NewServer(cfg *config.Config, userStore *auth.UserStore) *Server {
+func NewServer(cfg *config.Config, userStore *auth.UserStore, bw *bandwidth.Tracker) *Server {
 	srv := &Server{
 		Config:    cfg,
 		UserStore: userStore,
+		Bandwidth: bw,
 		shutdown:  make(chan struct{}),
 		transport: &http.Transport{
 			MaxIdleConns:        100,
@@ -191,36 +194,62 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if this is a super_admin IP (bypass auth + rate limit)
+	// Always require authentication
 	var user *auth.User
-	if superAdmin, ok := s.UserStore.IsSuperAdminIP(clientIP); ok {
-		user = superAdmin
-		ui.LogStatus("info", "HTTP super_admin bypass for: "+user.Username+" from "+clientIP)
-	} else {
-		// Normal authentication flow
-		username, password, ok := parseProxyAuth(r)
-		if !ok {
-			MetricAuthFailures.WithLabelValues("no_credentials").Inc()
-			w.Header().Set("Proxy-Authenticate", `Basic realm="Proxy Authentication Required"`)
-			http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
-			return
-		}
+	username, password, ok := parseProxyAuth(r)
+	if !ok {
+		MetricAuthFailures.WithLabelValues("no_credentials").Inc()
+		w.Header().Set("Proxy-Authenticate", `Basic realm="Proxy Authentication Required"`)
+		http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
+		return
+	}
 
-		var valid bool
-		user, valid = s.UserStore.ValidateCredentials(username, password)
-		if !valid {
-			MetricAuthFailures.WithLabelValues("invalid_credentials").Inc()
-			ui.LogStatus("warn", "Auth failed for user: "+username+" from "+clientIP)
-			w.Header().Set("Proxy-Authenticate", `Basic realm="Proxy Authentication Required"`)
-			http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
-			return
-		}
+	var valid bool
+	user, valid = s.UserStore.ValidateCredentials(username, password)
+	if !valid {
+		MetricAuthFailures.WithLabelValues("invalid_credentials").Inc()
+		ui.LogStatus("warn", "Auth failed for user: "+username+" from "+clientIP)
+		w.Header().Set("Proxy-Authenticate", `Basic realm="Proxy Authentication Required"`)
+		http.Error(w, "Proxy Authentication Required", http.StatusProxyAuthRequired)
+		return
+	}
 
-		// Check rate limit (only for non-super_admin)
+	// Determine if this user is a super_admin connecting from a trusted IP
+	isSuperAdmin := false
+	if user.Role == "super_admin" {
+		if _, ok := s.UserStore.IsSuperAdminIP(clientIP); ok {
+			isSuperAdmin = true
+			ui.LogStatus("info", "HTTP super_admin verified: "+username+" from "+clientIP)
+		}
+	}
+
+	if !isSuperAdmin {
+		// Check rate limit
 		if !s.UserStore.CheckRateLimit(username) {
 			MetricRateLimited.WithLabelValues(username).Inc()
 			ui.LogStatus("warn", "Rate limited: "+username)
 			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+			return
+		}
+
+		// Check account expiry
+		if !s.UserStore.CheckExpiry(username) {
+			ui.LogStatus("warn", "Account expired: "+username)
+			http.Error(w, "Account Expired", http.StatusForbidden)
+			return
+		}
+
+		// Check bandwidth allowance
+		if s.Bandwidth != nil && !s.Bandwidth.CheckAllowance(username, user.BandwidthLimitGB) {
+			ui.LogStatus("warn", "Bandwidth exceeded: "+username)
+			http.Error(w, "Bandwidth Limit Exceeded", http.StatusForbidden)
+			return
+		}
+
+		// Check concurrent connection limit
+		if s.Bandwidth != nil && !s.Bandwidth.CheckConnLimit(username, user.MaxConnections) {
+			ui.LogStatus("warn", "Connection limit reached: "+username)
+			http.Error(w, "Connection Limit Reached", http.StatusTooManyRequests)
 			return
 		}
 	}
@@ -228,6 +257,12 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// Track connection
 	MetricActiveConns.Inc()
 	defer MetricActiveConns.Dec()
+
+	// Track per-user connection count
+	if s.Bandwidth != nil && user != nil {
+		s.Bandwidth.IncrementConns(user.Username)
+		defer s.Bandwidth.DecrementConns(user.Username)
+	}
 
 	// Handle the request based on method
 	if r.Method == http.MethodConnect {
@@ -285,6 +320,15 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request, user *aut
 	// Send 200 Connection Established
 	clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
 
+	// Apply optional speed throttle
+	var relayClient, relayTarget net.Conn
+	relayClient = clientConn
+	relayTarget = targetConn
+	if user.BandwidthSpeedMbps > 0 {
+		relayClient = bandwidth.NewThrottledConn(clientConn, user.BandwidthSpeedMbps).(*bandwidth.ThrottledConn)
+		relayTarget = bandwidth.NewThrottledConn(targetConn, user.BandwidthSpeedMbps).(*bandwidth.ThrottledConn)
+	}
+
 	// Relay data bidirectionally with buffered I/O
 	var upBytes, downBytes int64
 	done := make(chan struct{}, 2)
@@ -300,8 +344,8 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request, user *aut
 		}
 	}
 
-	go copyBuf(targetConn, clientConn, &upBytes)
-	go copyBuf(clientConn, targetConn, &downBytes)
+	go copyBuf(relayTarget, relayClient, &upBytes)
+	go copyBuf(relayClient, relayTarget, &downBytes)
 
 	// Wait for both directions to finish for clean shutdown
 	<-done
@@ -312,6 +356,11 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request, user *aut
 	MetricBytes.WithLabelValues(user.Username, "upstream").Add(float64(upBytes))
 	MetricBytes.WithLabelValues(user.Username, "downstream").Add(float64(downBytes))
 	MetricDuration.Observe(duration)
+
+	// Record bandwidth usage for tracking
+	if s.Bandwidth != nil {
+		s.Bandwidth.RecordBytes(user.Username, upBytes, downBytes)
+	}
 }
 
 // handleHTTP handles plain HTTP proxy requests
@@ -359,6 +408,11 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request, user *auth.U
 	duration := time.Since(startTime).Seconds()
 	MetricBytes.WithLabelValues(user.Username, "downstream").Add(float64(written))
 	MetricDuration.Observe(duration)
+
+	// Record bandwidth usage for tracking
+	if s.Bandwidth != nil {
+		s.Bandwidth.RecordBytes(user.Username, 0, written)
+	}
 }
 
 // parseProxyAuth extracts username and password from Proxy-Authorization header
